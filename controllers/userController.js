@@ -1,111 +1,113 @@
+import jwt from "jsonwebtoken";
 import User from "../models/userModel.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
 
-// ✅ Create new user
-export const createUser = async (req, res) => {
-  try {
-    const user = await User.create(req.body);
-    res.status(201).json({
-      success: true,
-      message: "User created successfully",
-      data: user,
-    });
-  } catch (error) {
-    res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+function signToken(id) {
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || "7d"
+  });
+}
+
+// -------- AUTH --------
+
+// Register
+export const  register = asyncHandler(async (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name || !email || !password)
+    return res.status(400).json({ success: false, message: "All fields required" });
+
+  const exists = await User.findOne({ email });
+  if (exists) return res.status(409).json({ success: false, message: "Email already in use" });
+
+  const user = await User.create({ name, email, password });
+  const token = signToken(user._id);
+  res.status(201).json({
+    success: true,
+    data: { id: user._id, name: user.name, email: user.email, role: user.role },
+    token
+  });
+});
+
+// Login
+export const login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+  const user = await User.findOne({ email }).select("+password");
+  if (!user || !(await user.matchPassword(password))) {
+    return res.status(401).json({ success: false, message: "Invalid credentials" });
   }
-};
+  const token = signToken(user._id);
+  res.json({
+    success: true,
+    data: { id: user._id, name: user.name, email: user.email, role: user.role },
+    token
+  });
+});
 
-// ✅ Get all users
-export const getUsers = async (req, res) => {
-  try {
-    const users = await User.find();
-    res.status(200).json({
-      success: true,
-      count: users.length,
-      data: users,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+// Me
+export const me = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.userId);
+  res.json({ success: true, data: user });
+});
 
-// ✅ Get single user by ID
-export const getUserById = async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id);
+// -------- CRUD --------
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
+// Create (admin or for demos)
+export const createUser = asyncHandler(async (req, res) => {
+  const user = await User.create(req.body);
+  res.status(201).json({ success: true, data: user });
+});
 
-    res.status(200).json({
-      success: true,
-      data: user,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+// Read all (with pagination/filter/sort)
+export const getUsers = asyncHandler(async (req, res) => {
+  const { page = 1, limit = 10, search = "", sort = "-createdAt" } = req.query;
 
-// ✅ Update user
-export const updateUser = async (req, res) => {
-  try {
-    const user = await User.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+  const query = search
+    ? { $or: [{ name: new RegExp(search, "i") }, { email: new RegExp(search, "i") }] }
+    : {};
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
+  const skip = (Number(page) - 1) * Number(limit);
 
-    res.status(200).json({
-      success: true,
-      message: "User updated successfully",
-      data: user,
-    });
-  } catch (error) {
-    res.status(400).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+  const [items, total] = await Promise.all([
+    User.find(query).sort(sort).skip(skip).limit(Number(limit)),
+    User.countDocuments(query)
+  ]);
 
-// ✅ Delete user
-export const deleteUser = async (req, res) => {
-  try {
-    const user = await User.findByIdAndDelete(req.params.id);
+  res.json({
+    success: true,
+    pagination: {
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / Number(limit)),
+      limit: Number(limit)
+    },
+    data: items
+  });
+});
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
+// Read one
+export const getUserById = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+  res.json({ success: true, data: user });
+});
 
-    res.status(200).json({
-      success: true,
-      message: "User deleted successfully",
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+// Update
+export const updateUser = asyncHandler(async (req, res) => {
+  // if password is included, Mongoose pre-save hashing won't run with findByIdAndUpdate.
+  // So either disallow here or handle manually.
+  if (req.body.password) delete req.body.password;
+
+  const user = await User.findByIdAndUpdate(req.params.id, req.body, {
+    new: true,
+    runValidators: true
+  });
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+  res.json({ success: true, data: user });
+});
+
+// Delete
+export const deleteUser = asyncHandler(async (req, res) => {
+  const user = await User.findByIdAndDelete(req.params.id);
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+  res.json({ success: true, message: "User deleted" });
+});
