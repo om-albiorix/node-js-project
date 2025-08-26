@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 import User from "../models/userModel.js";
-import { asyncHandler } from "../utils/asyncHandler.js";
+import { asyncHandler } from "../utils/asyncHandler.js";  
 
 function signToken(id) {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -9,13 +9,11 @@ function signToken(id) {
 }
 
 // -------- AUTH --------
-
 // Register
 export const  register = asyncHandler(async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password)
+  if (!name || !email || !password) 
     return res.status(400).json({ success: false, message: "All fields required" });
-
   const exists = await User.findOne({ email });
   if (exists) return res.status(409).json({ success: false, message: "Email already in use" });
 

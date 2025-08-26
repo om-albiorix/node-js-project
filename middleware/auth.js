@@ -10,7 +10,6 @@ export function protect(req, res, next) {
   }
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // attach user id to request (you could fetch full user if needed)
     req.userId = decoded.id;
     next();
   } catch {
